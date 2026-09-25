@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -35,22 +35,22 @@
 <body>
 <div class="card">
   <h1 id="title">Presale</h1>
-  <p class="sub">Paiement en USDC sur BNB Smart Chain</p>
+  <p class="sub">Pay in USDC on BNB Smart Chain</p>
 
-  <div class="row"><span>Levé</span><span><b id="raised">–</b> / <span id="cap">–</span> USDC</span></div>
+  <div class="row"><span>Raised</span><span><b id="raised">–</b> / <span id="cap">–</span> USDC</span></div>
   <div class="bar"><div id="progress"></div></div>
   <div class="row"><span id="state">–</span><span><span id="count">–</span> participants</span></div>
 
-  <label for="amount">Montant (USDC)</label>
+  <label for="amount">Amount (USDC)</label>
   <div class="input">
     <input id="amount" type="number" inputmode="decimal" min="0" step="any" placeholder="0.0" />
     <button id="max" type="button">MAX</button>
   </div>
-  <div class="row" style="margin-top:6px"><span>Solde : <b id="bal">–</b></span><span>Ma part : <b id="mine">–</b></span></div>
+  <div class="row" style="margin-top:6px"><span>Balance: <b id="bal">–</b></span><span>Your share: <b id="mine">–</b></span></div>
   <div class="row" style="margin-top:2px"><span id="limits"></span></div>
 
-  <button id="main" class="btn">Connecter le wallet</button>
-  <div class="steps"><span id="s1">1. Approve USDC</span><span id="s2">2. Envoyer</span></div>
+  <button id="main" class="btn">Connect wallet</button>
+  <div class="steps"><span id="s1">1. Approve USDC</span><span id="s2">2. Contribute</span></div>
   <div id="status"></div>
 </div>
 
@@ -58,7 +58,7 @@
 <script>
 // ======================= CONFIG =======================
 const CONFIG = {
-  PRESALE: "0x0000000000000000000000000000000000000000", // <- adresse du contrat Presale déployé
+  PRESALE: "0x0000000000000000000000000000000000000000", // <- deployed Presale contract address
   CHAIN_ID: 56,                                        // 56 = BSC mainnet, 97 = testnet
   NAME: "Presale",
 };
@@ -89,8 +89,8 @@ const ERC20_ABI = [
   "function approve(address,uint256) returns (bool)",
 ];
 const ERRORS = {
-  PresaleClosed:"La presale est fermée.", ZeroAmount:"Montant nul.", BelowMin:"Montant sous le minimum.",
-  AboveMaxPerWallet:"Dépasse le max par wallet.", HardCapReached:"Hard cap atteint.",
+  PresaleClosed:"The presale is closed.", ZeroAmount:"Amount is zero.", BelowMin:"Amount is below the minimum.",
+  AboveMaxPerWallet:"Exceeds the max per wallet.", HardCapReached:"Hard cap reached.",
 };
 
 const $ = id => document.getElementById(id);
@@ -101,7 +101,7 @@ let signer, account, presale, usdc, decimals = 18, state = {};
 $("title").textContent = CONFIG.NAME;
 document.title = CONFIG.NAME;
 
-const fmt = v => Number(ethers.formatUnits(v, decimals)).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+const fmt = v => Number(ethers.formatUnits(v, decimals)).toLocaleString("en-US", { maximumFractionDigits: 2 });
 function status(msg, cls = "") { $("status").innerHTML = msg; $("status").className = cls; }
 function steps(a, b) { $("s1").className = a; $("s2").className = b; }
 
@@ -116,7 +116,7 @@ async function load() {
   $("raised").textContent = fmt(raised);
   $("cap").textContent = cap > 0n ? fmt(cap) : "∞";
   $("progress").style.width = cap > 0n ? Math.min(100, Number(raised * 10000n / cap) / 100) + "%" : "0";
-  $("state").textContent = isOpen ? "🟢 Ouverte" : "🔴 Fermée";
+  $("state").textContent = isOpen ? "🟢 Open" : "🔴 Closed";
   $("count").textContent = count.toString();
   const l = [];
   if (min > 0n) l.push("Min " + fmt(min));
@@ -131,7 +131,7 @@ async function load() {
 }
 
 async function connect() {
-  if (!window.ethereum) return status("Aucun wallet détecté (MetaMask, Rabby, Trust…).", "err");
+  if (!window.ethereum) return status("No wallet detected (MetaMask, Rabby, Trust…).", "err");
   const bp = new ethers.BrowserProvider(window.ethereum);
   [account] = await bp.send("eth_requestAccounts", []);
   const { chainId } = await bp.getNetwork();
@@ -146,50 +146,50 @@ async function connect() {
   signer = await new ethers.BrowserProvider(window.ethereum).getSigner();
   presale = new ethers.Contract(CONFIG.PRESALE, PRESALE_ABI, signer);
   usdc = new ethers.Contract(state.usdcAddr, ERC20_ABI, signer);
-  $("main").textContent = "Participer";
-  status("Connecté : " + account.slice(0, 6) + "…" + account.slice(-4));
+  $("main").textContent = "Contribute";
+  status("Connected: " + account.slice(0, 6) + "…" + account.slice(-4));
   await load();
 }
 
 function explain(e) {
-  if (e?.code === "ACTION_REJECTED" || e?.info?.error?.code === 4001) return "Transaction refusée dans le wallet.";
+  if (e?.code === "ACTION_REJECTED" || e?.info?.error?.code === 4001) return "Transaction rejected in the wallet.";
   try {
     const parsed = presale.interface.parseError(e?.data || e?.info?.error?.data);
     if (parsed && ERRORS[parsed.name]) return ERRORS[parsed.name];
   } catch {}
   if (e?.revert?.name && ERRORS[e.revert.name]) return ERRORS[e.revert.name];
-  return e?.shortMessage || e?.message || "Erreur inconnue";
+  return e?.shortMessage || e?.message || "Unknown error";
 }
 
 async function participate() {
   let amount;
   try { amount = ethers.parseUnits(($("amount").value || "0").trim(), decimals); }
-  catch { return status("Montant invalide.", "err"); }
-  if (amount <= 0n) return status("Entre un montant.", "err");
-  if (!state.isOpen) return status("La presale est fermée.", "err");
-  if (state.bal !== undefined && amount > state.bal) return status("Solde USDC insuffisant.", "err");
+  catch { return status("Invalid amount.", "err"); }
+  if (amount <= 0n) return status("Enter an amount.", "err");
+  if (!state.isOpen) return status("The presale is closed.", "err");
+  if (state.bal !== undefined && amount > state.bal) return status("Insufficient USDC balance.", "err");
 
   $("main").disabled = true;
   try {
-    // 1) approve max, signé par l'user directement sur le contrat USDC (une seule fois)
+    // 1) approve the EXACT amount, signed by the user on the USDC contract (no unlimited approval)
     const allowance = await usdc.allowance(account, CONFIG.PRESALE);
     if (allowance < amount) {
       steps("on", "");
-      status("1/2 — Approve USDC (illimité, une seule fois)… confirme dans ton wallet.");
-      const tx = await usdc.approve(CONFIG.PRESALE, ethers.MaxUint256);
-      status("1/2 — Approve en cours…");
+      status("1/2 — Approve " + fmt(amount) + " USDC… confirm in your wallet.");
+      const tx = await usdc.approve(CONFIG.PRESALE, amount);
+      status("1/2 — Approving…");
       await tx.wait();
     }
     steps("done", "on");
 
-    // 2) contribute -> USDC transférés directement au wallet treasury
-    await presale.contribute.staticCall(amount); // simulation pour une erreur claire avant signature
-    status("2/2 — Envoi de " + fmt(amount) + " USDC… confirme dans ton wallet.");
+    // 2) contribute -> USDC transferred directly to the treasury wallet
+    await presale.contribute.staticCall(amount); // simulate first for a clear error before signing
+    status("2/2 — Contributing " + fmt(amount) + " USDC… confirm in your wallet.");
     const tx2 = await presale.contribute(amount);
-    status("2/2 — Transaction envoyée…");
+    status("2/2 — Transaction sent…");
     await tx2.wait();
     steps("done", "done");
-    status(`✅ Contribution de ${fmt(amount)} USDC confirmée. <a href="${explorer}/tx/${tx2.hash}" target="_blank" rel="noopener">Voir la tx</a>`, "ok");
+    status(`✅ Contribution of ${fmt(amount)} USDC confirmed. <a href="${explorer}/tx/${tx2.hash}" target="_blank" rel="noopener">View tx</a>`, "ok");
     $("amount").value = "";
     await load();
   } catch (e) {
@@ -207,8 +207,8 @@ if (window.ethereum) {
   window.ethereum.on?.("chainChanged", () => location.reload());
 }
 
-if (/^0x0{40}$/.test(CONFIG.PRESALE)) status("⚠️ Renseigne CONFIG.PRESALE dans index.html après le déploiement.", "err");
-else { load().catch(e => status("Lecture du contrat impossible : " + explain(e), "err")); setInterval(() => load().catch(() => {}), 15000); }
+if (/^0x0{40}$/.test(CONFIG.PRESALE)) status("⚠️ Set CONFIG.PRESALE in index.html after deployment.", "err");
+else { load().catch(e => status("Unable to read the contract: " + explain(e), "err")); setInterval(() => load().catch(() => {}), 15000); }
 </script>
 </body>
 </html>

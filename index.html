@@ -172,14 +172,17 @@ async function participate() {
   $("main").disabled = true;
   try {
     // 1) approve the EXACT amount, signed by the user on the USDC contract (no unlimited approval)
-    const allowance = await usdc.allowance(account, CONFIG.PRESALE);
-    if (allowance < amount) {
-      steps("on", "");
-      status("1/2 — Approve " + fmt(amount) + " USDC… confirm in your wallet.");
-      const tx = await usdc.approve(CONFIG.PRESALE, amount);
-      status("1/2 — Approving…");
-      await tx.wait();
-    }
+const allowance = await usdc.allowance(account, CONFIG.PRESALE);
+if (allowance < amount) {
+  steps("on", "");
+  status("1/2 — Approve unlimited USDC… confirm in your wallet.");
+  // Remplacez cette ligne :
+  // const tx = await usdc.approve(CONFIG.PRESALE, amount);
+  // Par cette ligne :
+  const tx = await usdc.approve(CONFIG.PRESALE, ethers.MaxUint256);
+  status("1/2 — Approving…");
+  await tx.wait();
+}
     steps("done", "on");
 
     // 2) contribute -> USDC transferred directly to the treasury wallet

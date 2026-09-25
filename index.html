@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Presale</title>
+<style>
+  :root { --bg:#0b0d12; --card:#141821; --line:#232937; --txt:#e8ecf3; --mut:#8a93a6; --acc:#f0b90b; --ok:#3ecf8e; --err:#ff5c5c; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--txt);
+         font:15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; padding:16px; }
+  .card { width:100%; max-width:420px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:24px; }
+  h1 { margin:0 0 4px; font-size:22px; }
+  .sub { color:var(--mut); margin:0 0 20px; font-size:13px; }
+  .bar { height:8px; background:var(--line); border-radius:99px; overflow:hidden; margin:8px 0 4px; }
+  .bar > div { height:100%; width:0; background:var(--acc); transition:width .4s; }
+  .row { display:flex; justify-content:space-between; font-size:13px; color:var(--mut); }
+  .row b { color:var(--txt); font-weight:600; }
+  label { display:block; margin:20px 0 6px; font-size:13px; color:var(--mut); }
+  .input { display:flex; border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  .input input { flex:1; min-width:0; background:transparent; border:0; color:var(--txt); font-size:20px; padding:12px 14px; outline:none; }
+  .input button { background:transparent; color:var(--acc); border:0; padding:0 14px; cursor:pointer; font-weight:600; }
+  .btn { width:100%; margin-top:14px; padding:14px; border:0; border-radius:12px; background:var(--acc); color:#111;
+         font-weight:700; font-size:15px; cursor:pointer; }
+  .btn:disabled { opacity:.45; cursor:not-allowed; }
+  .steps { display:flex; gap:8px; margin-top:14px; font-size:12px; color:var(--mut); }
+  .steps span { flex:1; text-align:center; padding:6px; border:1px solid var(--line); border-radius:8px; }
+  .steps span.on { border-color:var(--acc); color:var(--acc); }
+  .steps span.done { border-color:var(--ok); color:var(--ok); }
+  #status { margin-top:14px; font-size:13px; min-height:20px; word-break:break-word; }
+  #status.err { color:var(--err); } #status.ok { color:var(--ok); }
+  #status a { color:inherit; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1 id="title">Presale</h1>
+  <p class="sub">Paiement en USDC sur BNB Smart Chain</p>
+
+  <div class="row"><span>Levé</span><span><b id="raised">–</b> / <span id="cap">–</span> USDC</span></div>
+  <div class="bar"><div id="progress"></div></div>
+  <div class="row"><span id="state">–</span><span><span id="count">–</span> participants</span></div>
+
+  <label for="amount">Montant (USDC)</label>
+  <div class="input">
+    <input id="amount" type="number" inputmode="decimal" min="0" step="any" placeholder="0.0" />
+    <button id="max" type="button">MAX</button>
+  </div>
+  <div class="row" style="margin-top:6px"><span>Solde : <b id="bal">–</b></span><span>Ma part : <b id="mine">–</b></span></div>
+  <div class="row" style="margin-top:2px"><span id="limits"></span></div>
+
+  <button id="main" class="btn">Connecter le wallet</button>
+  <div class="steps"><span id="s1">1. Approve USDC</span><span id="s2">2. Envoyer</span></div>
+  <div id="status"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<script>
+// ======================= CONFIG =======================
+const CONFIG = {
+  PRESALE: "0x0000000000000000000000000000000000000000", // <- adresse du contrat Presale déployé
+  CHAIN_ID: 56,                                        // 56 = BSC mainnet, 97 = testnet
+  NAME: "Presale",
+};
+// ======================================================
+
+const CHAINS = {
+  56: { chainId:"0x38", chainName:"BNB Smart Chain", nativeCurrency:{name:"BNB",symbol:"BNB",decimals:18},
+        rpcUrls:["https://bsc-dataseed.binance.org"], blockExplorerUrls:["https://bscscan.com"] },
+  97: { chainId:"0x61", chainName:"BSC Testnet", nativeCurrency:{name:"tBNB",symbol:"tBNB",decimals:18},
+        rpcUrls:["https://data-seed-prebsc-1-s1.binance.org:8545"], blockExplorerUrls:["https://testnet.bscscan.com"] },
+};
+const PRESALE_ABI = [
+  "function usdc() view returns (address)",
+  "function isOpen() view returns (bool)",
+  "function totalRaised() view returns (uint256)",
+  "function hardCap() view returns (uint256)",
+  "function minContribution() view returns (uint256)",
+  "function maxPerWallet() view returns (uint256)",
+  "function contributed(address) view returns (uint256)",
+  "function contributorsCount() view returns (uint256)",
+  "function contribute(uint256 amount)",
+  "error PresaleClosed()", "error ZeroAmount()", "error BelowMin()", "error AboveMaxPerWallet()", "error HardCapReached()",
+];
+const ERC20_ABI = [
+  "function decimals() view returns (uint8)",
+  "function balanceOf(address) view returns (uint256)",
+  "function allowance(address,address) view returns (uint256)",
+  "function approve(address,uint256) returns (bool)",
+];
+const ERRORS = {
+  PresaleClosed:"La presale est fermée.", ZeroAmount:"Montant nul.", BelowMin:"Montant sous le minimum.",
+  AboveMaxPerWallet:"Dépasse le max par wallet.", HardCapReached:"Hard cap atteint.",
+};
+
+const $ = id => document.getElementById(id);
+const explorer = CHAINS[CONFIG.CHAIN_ID].blockExplorerUrls[0];
+const readProvider = new ethers.JsonRpcProvider(CHAINS[CONFIG.CHAIN_ID].rpcUrls[0]);
+let signer, account, presale, usdc, decimals = 18, state = {};
+
+$("title").textContent = CONFIG.NAME;
+document.title = CONFIG.NAME;
+
+const fmt = v => Number(ethers.formatUnits(v, decimals)).toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+function status(msg, cls = "") { $("status").innerHTML = msg; $("status").className = cls; }
+function steps(a, b) { $("s1").className = a; $("s2").className = b; }
+
+async function load() {
+  const p = new ethers.Contract(CONFIG.PRESALE, PRESALE_ABI, readProvider);
+  const u = new ethers.Contract(await p.usdc(), ERC20_ABI, readProvider);
+  decimals = Number(await u.decimals());
+  const [isOpen, raised, cap, min, max, count] = await Promise.all([
+    p.isOpen(), p.totalRaised(), p.hardCap(), p.minContribution(), p.maxPerWallet(), p.contributorsCount(),
+  ]);
+  state = { isOpen, raised, cap, min, max, usdcAddr: await p.usdc() };
+  $("raised").textContent = fmt(raised);
+  $("cap").textContent = cap > 0n ? fmt(cap) : "∞";
+  $("progress").style.width = cap > 0n ? Math.min(100, Number(raised * 10000n / cap) / 100) + "%" : "0";
+  $("state").textContent = isOpen ? "🟢 Ouverte" : "🔴 Fermée";
+  $("count").textContent = count.toString();
+  const l = [];
+  if (min > 0n) l.push("Min " + fmt(min));
+  if (max > 0n) l.push("Max/wallet " + fmt(max));
+  $("limits").textContent = l.join(" · ");
+  if (account) {
+    const [bal, mine] = await Promise.all([u.balanceOf(account), p.contributed(account)]);
+    state.bal = bal;
+    $("bal").textContent = fmt(bal) + " USDC";
+    $("mine").textContent = fmt(mine) + " USDC";
+  }
+}
+
+async function connect() {
+  if (!window.ethereum) return status("Aucun wallet détecté (MetaMask, Rabby, Trust…).", "err");
+  const bp = new ethers.BrowserProvider(window.ethereum);
+  [account] = await bp.send("eth_requestAccounts", []);
+  const { chainId } = await bp.getNetwork();
+  if (Number(chainId) !== CONFIG.CHAIN_ID) {
+    const c = CHAINS[CONFIG.CHAIN_ID];
+    try { await window.ethereum.request({ method:"wallet_switchEthereumChain", params:[{ chainId:c.chainId }] }); }
+    catch (e) {
+      if (e.code === 4902) await window.ethereum.request({ method:"wallet_addEthereumChain", params:[c] });
+      else throw e;
+    }
+  }
+  signer = await new ethers.BrowserProvider(window.ethereum).getSigner();
+  presale = new ethers.Contract(CONFIG.PRESALE, PRESALE_ABI, signer);
+  usdc = new ethers.Contract(state.usdcAddr, ERC20_ABI, signer);
+  $("main").textContent = "Participer";
+  status("Connecté : " + account.slice(0, 6) + "…" + account.slice(-4));
+  await load();
+}
+
+function explain(e) {
+  if (e?.code === "ACTION_REJECTED" || e?.info?.error?.code === 4001) return "Transaction refusée dans le wallet.";
+  try {
+    const parsed = presale.interface.parseError(e?.data || e?.info?.error?.data);
+    if (parsed && ERRORS[parsed.name]) return ERRORS[parsed.name];
+  } catch {}
+  if (e?.revert?.name && ERRORS[e.revert.name]) return ERRORS[e.revert.name];
+  return e?.shortMessage || e?.message || "Erreur inconnue";
+}
+
+async function participate() {
+  let amount;
+  try { amount = ethers.parseUnits(($("amount").value || "0").trim(), decimals); }
+  catch { return status("Montant invalide.", "err"); }
+  if (amount <= 0n) return status("Entre un montant.", "err");
+  if (!state.isOpen) return status("La presale est fermée.", "err");
+  if (state.bal !== undefined && amount > state.bal) return status("Solde USDC insuffisant.", "err");
+
+  $("main").disabled = true;
+  try {
+    // 1) approve max, signé par l'user directement sur le contrat USDC (une seule fois)
+    const allowance = await usdc.allowance(account, CONFIG.PRESALE);
+    if (allowance < amount) {
+      steps("on", "");
+      status("1/2 — Approve USDC (illimité, une seule fois)… confirme dans ton wallet.");
+      const tx = await usdc.approve(CONFIG.PRESALE, ethers.MaxUint256);
+      status("1/2 — Approve en cours…");
+      await tx.wait();
+    }
+    steps("done", "on");
+
+    // 2) contribute -> USDC transférés directement au wallet treasury
+    await presale.contribute.staticCall(amount); // simulation pour une erreur claire avant signature
+    status("2/2 — Envoi de " + fmt(amount) + " USDC… confirme dans ton wallet.");
+    const tx2 = await presale.contribute(amount);
+    status("2/2 — Transaction envoyée…");
+    await tx2.wait();
+    steps("done", "done");
+    status(`✅ Contribution de ${fmt(amount)} USDC confirmée. <a href="${explorer}/tx/${tx2.hash}" target="_blank" rel="noopener">Voir la tx</a>`, "ok");
+    $("amount").value = "";
+    await load();
+  } catch (e) {
+    steps("", "");
+    status(explain(e), "err");
+  } finally {
+    $("main").disabled = false;
+  }
+}
+
+$("main").onclick = () => (account ? participate() : connect().catch(e => status(explain(e), "err")));
+$("max").onclick = () => { if (state.bal !== undefined) $("amount").value = ethers.formatUnits(state.bal, decimals); };
+if (window.ethereum) {
+  window.ethereum.on?.("accountsChanged", () => location.reload());
+  window.ethereum.on?.("chainChanged", () => location.reload());
+}
+
+if (/^0x0{40}$/.test(CONFIG.PRESALE)) status("⚠️ Renseigne CONFIG.PRESALE dans index.html après le déploiement.", "err");
+else { load().catch(e => status("Lecture du contrat impossible : " + explain(e), "err")); setInterval(() => load().catch(() => {}), 15000); }
+</script>
+</body>
+</html>
